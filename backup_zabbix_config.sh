@@ -1,9 +1,9 @@
 #!/bin/bash
 SECRET_FILE='/etc/zabbix/.backup_zabbix_config.secret'
 declare -A src=(
-	['host']='app-inzbxdb.dc.nspk.ru'
+	['host']='zabbix-db-host.example.com'
 	['db']='zabbix'
-	['user']='zabbixdit'
+	['user']='zabbix'
 )
 declare -A dst=(
 	['host']=${src[host]}
