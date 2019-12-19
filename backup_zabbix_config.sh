@@ -18,16 +18,17 @@ Usage:
 	$0 -h | [-x] [-s SOURCE_DB_NAME] [-d DEST_DB_NAME] [-d DEST_PATH] [-e]	   
  	 -h		To show this message
  	 -x 		To turn on BASH trace mode
- 	 -s 		Source database name represented as [hostName:]dbName (dbName="zabbix" by default)
- 	 -d		Destination database name represented as [hostName:]dbName (dbName=="backup_zbx_conf_{%Y%m%d%H%M}" by default)
+ 	 -s 		Source database name represented as db_name@[user:]host (db_name=="zabbix" by default)
+ 	 -d		Destination database name. Format is the same as for source (db_name=="backup_zbx_conf_{%Y%m%d%H%M}" by default)
  	 -p		Destination path (directory where to place the dump file)
   	 -e 		Execute-flag: if set, script will connect to destination host and apply generated SQL
 EOUSAGE
 }
 
-while getopts ':hs:d:p:ex' k; do
+while getopts ':hs:d:p:exz' k; do
  case $k in
-  x) export TRACE=1; set -x ;;
+  z) 	flCompress=1 ;;
+  x) 	export TRACE=1; set -x ;;
   s) 
   	if [[ $OPTARG =~ @ ]]; then
   		src['db']=${OPTARG%%@*}
@@ -47,7 +48,7 @@ while getopts ':hs:d:p:ex' k; do
   		user_host=${OPTARG#*@}
   		if [[ $user_host =~ : ]]; then
   			dst['user']=${user_host%:*}
-  			dst['host']=${user_host##*:}
+  			dst['host']=${udoctorser_host##*:}
   		else
   			dst['host']=$user_host
   		fi
@@ -57,7 +58,7 @@ while getopts ':hs:d:p:ex' k; do
   ;;
   p) 	dst['path']=$OPTARG	;;
   e) 	flExecute=1		;;
-  h) 	doShowUsage; exit 0 ;;
+  h) 	doShowUsage; exit 0 	;;
   *) 	echo "Unknown option $k" >&2 ;;
  esac
 done
@@ -76,7 +77,7 @@ src['passwd']=${PASSWD[${src[user]}]}
 	exit 2
 }
 
-rxDataTables='^(alerts|history|event|acknowle|trend|logs|auditlog(_details)?)'
+rxDataTables='^(alerts|history|acknowle|trend|logs|auditlog(_details)?)'
 tblsZbxConfig=$( mysql -h ${src[host]} -u ${src[user]} -p"${src[passwd]}" -e 'show tables\G' ${src[db]} | \
 			sed -nr 's%^[^:]+:\s*%%p' | egrep -v "$rxDataTables" )
   tblsZbxData=$( mysql -h ${src[host]} -u ${src[user]} -p"${src[passwd]}" -e 'show tables\G' ${src[db]} | \
@@ -99,7 +100,7 @@ GRANT 	ALL PRIVILEGES ON ${dst[db]}.* TO 'zabbixdit'@'%'	IDENTIFIED BY '${PASSWD
 USE ${dst[db]};
 EOSQL
 #--set-gtid-purged=OFF
-mysqldump -h ${src[host]} -u ${src[user]} -p"${src[passwd]}" --skip-triggers			${src[db]} $tblsZbxConfig
+mysqldump -h ${src[host]} -u ${src[user]} -p"${src[passwd]}" --events --routines --triggers	${src[db]} $tblsZbxConfig
 mysqldump -h ${src[host]} -u ${src[user]} -p"${src[passwd]}" --skip-triggers --no-data     	${src[db]} $tblsZbxData
 cat <<EOSQL
 DELETE FROM ids WHERE table_name IN $tData
@@ -110,3 +111,9 @@ echo "Saved to file: $dumpFile"
 
 [[ $flExecute ]] && \
 	mysql -h ${dst[host]} ${dst[db]} <"$dumpFile"
+
+[[ $flCompress ]] && {
+	cmdCompress=$({ which pbzip2 || which bzip2 || which gzip; } 2>/dev/null)
+	set -x
+	$cmdCompress "$dumpFile"
+}	
