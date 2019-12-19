@@ -12,7 +12,7 @@
 # Send your questions and suggestions to drvtiny@gmail.com. Thank you for using this script!
 #
 [[ $1 == '-x' ]] && { set -x; export TRACE=1; }
-
+declare -r PROXY_SETTINGS='/etc/profile.d/proxy.sh'
 declare -A err2msg=(
 	['ERR_INVALID_OPTION']='Invalid option passed to me'
 	['ERR_TMP_DIR_FAIL']='Failed to create and use temporary directory'
@@ -31,7 +31,10 @@ source '/opt/Libs/BASH/erc_handle.inc'
 source '/opt/Libs/BASH/ldap.inc'
 source '/opt/zabbix/aux/checks/domain_creds.inc'
 source '/opt/Libs/BASH/zbx_get_and_send.inc'
-
+[[ $(env) =~ (https?_proxy|HTTPS?_PROXY) ]] || {
+        [[ -f $PROXY_SETTINGS && -r $PROXY_SETTINGS ]] && \
+                source $PROXY_SETTINGS	
+}
 # Defaults ->
 # Default (fallback) CA certificate file. If the valid path to the CA cert should be found in the downloaded server certificate, this variable will be replaced.
 pemCACert='/opt/Zabbix/x509/sca.cer'
@@ -44,8 +47,8 @@ err_ () {
 }
 
 declare -A host=(
-	['CertName']='support.nspk.ru'
-	['ZbxHost']='msk1-vm-redmine01.unix.nspk.ru'
+	['CertName']='support.example.com'
+	['ZbxHost']='redmine01.example.com'
 )
 
 declare -A opts=(
@@ -53,6 +56,7 @@ declare -A opts=(
 	['z']='host["ZbxHost"]'
 	['p']='sslPort'
 	['x']='flTrace'
+	['i']='flIgnoreCAInCert'
 	['D']='flDontRemoveTmp'
 )
 
@@ -61,7 +65,7 @@ trace () {
 	echo "+${BASH_SOURCE[1]}:${BASH_LINENO[0]}:${FUNCNAME[1]}:${BASH_COMMAND}"
 }
 
-[[ $flTrace && !$TRACE ]] && {
+[[ $flTrace && ! $TRACE ]] && {
 	set -x
 #	set -o functrace
 #	shopt -s extdebug
@@ -175,10 +179,15 @@ openssl s_client -showcerts -servername $sslHost -connect $sslHost:$sslPort <<<'
 	openssl x509 -inform pem -text > "$pemCert"
 urlCRL=$(sed -nr '/CRL Distribution Points:/,${ s%^\s+URI:((ldap|http)s?:.+)$%\1%p; T l; q; :l }' "$pemCert") && \
 	pemCRL=$(get_file_by_url "$urlCRL" "$ldapDomain" 'crl.pem')
-urlCACrt=$(sed -nr 's%^\s*CA Issuers.+URI:((http|ldap)s?:.+)\s*$%\1%pI; T l; q; :l' "$pemCert") && \
-	pemCACrt=$(get_file_by_url "$urlCACrt" "$ldapDomain" 'ca_cert.pem')
+	
+if [[ $flIgnoreCAInCert ]]; then
+	flIgnoreCAInCert=' '
+else
+	urlCACrt=$(sed -nr 's%^\s*CA Issuers.+URI:((http|ldap)s?:.+)\s*$%\1%pI; T l; q; :l' "$pemCert") && \
+		pemCACrt=$(get_file_by_url "$urlCACrt" "$ldapDomain" 'ca_cert.pem')
+fi
 
-openssl verify -CAfile "$pemCACrt" -CRLfile "$pemCRL" "$pemCert"
+openssl verify ${flIgnoreCAInCert:--CAfile "$pemCACrt"} -CRLfile "$pemCRL" "$pemCert"
 checkCRLStatus=$?
 
 tsCertValidTill=$(date -d "$(sed -nr 's%^\s+Not After\s+:\s+%%p' $pemCert)" +%s)
