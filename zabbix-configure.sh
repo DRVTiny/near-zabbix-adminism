@@ -14,19 +14,48 @@ declare -A binaryType=(
 	['agent']=0
 )
 declare -a binaryPath=('' '/sys')
-declare -A opts=(
-	['x']='flDebug'
-	['a']='flActualizeCur'
-	['s']='sourcesPath'
-	['p']='soft'
-	['v']='ver'
-	['r']='flRemInstDir'
-	['e']='flUseEnv'
-	['b']='flUseBinSfx'
-	['J']='flEnableJabber'
-)
 
-source '/opt/Libs/BASH/getopts_helper.inc'
+tlstype='gnutls'
+dbtype='mysql'
+#dbtype='mysql'
+declare -A opts=(
+	['x']='flDebug {turn of BASH trace mode}'
+	['a']='flActualizeCur {actualize "cur" symlink}'
+	['s']='sourcesPath {path to Zabbix sources we need to compile}'
+	['p']='soft {software name. Autodetect using sources directtory name by default}'
+	['v']='ver {Zabbix version (autodetection will applied if not specified)}'
+	['r']='flRemInstDir {remove installation directory}'
+	['e']='flUseEnv {use environment variables}'
+	['b']='flUseBinSfx {add version suffix to the names of resulting binaries}'
+	['J']='flEnableJabber {enable Jabber media type support}'
+	['I']='flEnableIPMI {enable IMPI support}'
+	['D']='dbtype {database type: postgresql or mysql}'
+	['T']='tlstype {TLS implementation: OpenSSL or GnuTLS (default)}'
+)
+declare -r DFLT_INC_PATH="$(pwd)/inc"
+
+export BASH_INC_PATH=${BASH_INC_PATH:-$DFLT_INC_PATH}
+source "${BASH_INC_PATH}/getopts_helper.inc"
+
+tlstype=${tlstype,,}
+[[ $tlstype =~ (openssl|gnutls) ]] || {
+	echo "wrong/unsupported TLS type specified: $tlstype" >&2
+	exit 1
+}
+dbtype=${dbtype,,}
+if [[ $dbtype =~ ^p(ost)?g(re)? ]]; then
+	flUsePostgreSQL=1	
+elif [[ $dbtype =~ ^my ]]; then
+	flUseMySQL=1
+else
+	echo 'Unknown database type: must be postgresql or mysql' >&2
+	exit 1
+fi
+
+dbconfig=
+[[ ( $flUsePostgreSQL || $flUseMySQL ) && $dbtype =~ =(.+)$ ]] && \
+	dbconfig=${BASH_REMATCH[1]}
+	
 
 [[ $flDebug ]] && set -x
 
@@ -95,8 +124,9 @@ make clean
 	--enable-proxy \
 	--enable-agent \
 	--disable-java \
-	--with-mysql \
-	--with-gnutls \
+	${flUseMySQL:+--with-mysql${dbconfig:+=$dbconfig}} \
+	${flUsePostgreSQL:+--with-postgresql${dbconfig:+=$dbconfig}} \
+	--with-${tlstype} \
 	--with-net-snmp \
 	--with-ssh2 \
 	--with-libxml2 \
