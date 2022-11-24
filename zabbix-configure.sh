@@ -31,31 +31,48 @@ declare -A opts=(
 	['I']='flEnableIPMI {enable IMPI support}'
 	['D']='dbtype {database type: postgresql or mysql}'
 	['T']='tlstype {TLS implementation: OpenSSL or GnuTLS (default)}'
+	['Z']='flWOServer {do not compile zabbix-server}'
 )
 declare -r DFLT_INC_PATH="$(pwd)/inc"
 
 export BASH_INC_PATH=${BASH_INC_PATH:-$DFLT_INC_PATH}
 source "${BASH_INC_PATH}/getopts_helper.inc"
 
+enable_server_opt=
+[[ $flWOServer ]] || enable_server_opt='--enable-server'
+
 tlstype=${tlstype,,}
 [[ $tlstype =~ (openssl|gnutls) ]] || {
 	echo "wrong/unsupported TLS type specified: $tlstype" >&2
 	exit 1
 }
-dbtype=${dbtype,,}
-if [[ $dbtype =~ ^p(ost)?g(re)? ]]; then
-	flUsePostgreSQL=1	
-elif [[ $dbtype =~ ^my ]]; then
-	flUseMySQL=1
-else
-	echo 'Unknown database type: must be postgresql or mysql' >&2
-	exit 1
-fi
+
+declare -A dbtypes=(
+	['postgresql']='^p(ost)?g(re)?'
+	['mysql']='^my'
+	['sqlite3']='^(sqli|lite)'
+)
 
 dbconfig=
-[[ ( $flUsePostgreSQL || $flUseMySQL ) && $dbtype =~ =(.+)$ ]] && \
-	dbconfig=${BASH_REMATCH[1]}
-	
+if [[ $dbtype =~ ^([^=]+)=(.+)$ ]]; then
+	dbtype=${BASH_REMATCH[1]}
+	dbconfig=${BASH_REMATCH[2]}
+fi
+dbtype=${dbtype,,}
+
+flFound=
+for dbt in ${!dbtypes[@]}; do
+	[[ $dbtype =~ ${dbtypes[$dbt]} ]] && {
+		dbtype=$dbt
+		flFound=1
+		break
+	}
+done
+
+if ! [[ $flFound ]]; then
+	echo 'Unknown database type, must be one of: '$(echo "${!dbtypes[@]}" | tr ' ' ',') >&2
+	exit 1
+fi
 
 [[ $flDebug ]] && set -x
 
@@ -120,12 +137,11 @@ make clean
 	--pdfdir="$pfx/Documentation/pdf" \
 	--psdir="$pfx/Documentation/PostScript" \
 	${bin_sfx:+--program-suffix="${bin_sfx}"} \
-	--enable-server \
+	${enable_server_opt} \
 	--enable-proxy \
 	--enable-agent \
 	--disable-java \
-	${flUseMySQL:+--with-mysql${dbconfig:+=$dbconfig}} \
-	${flUsePostgreSQL:+--with-postgresql${dbconfig:+=$dbconfig}} \
+	--with-$dbtype${dbconfig:+=$dbconfig} \
 	--with-${tlstype} \
 	--with-net-snmp \
 	--with-ssh2 \
@@ -154,7 +170,7 @@ make clean
 					sudo ln -s "zabbix_${b}${bin_sfx}" "${dstPath}/zabbix_${b}"
 			done
 		}
-		[[ -f $ZBX_SRV_CONF ]] && {
+		[[ ! $flWOServer && -f $ZBX_SRV_CONF ]] && {
 			confFile=${ZBX_SRV_CONF##*/}
 			sudo mv "$pfx/Configuration/$confFile"{,.distr${bin_sfx}} && \
 				sudo ln -s "${ZBX_SRV_CONF}" "$pfx/Configuration/"
