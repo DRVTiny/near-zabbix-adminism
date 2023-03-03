@@ -11,10 +11,22 @@
 #
 # Send your questions and suggestions to drvtiny@gmail.com. Thank you for using this script!
 #
+
+# Defaults ->
+# Default (fallback) CA certificate file. If the valid path to the CA cert should be found in the downloaded server certificate, this variable will be replaced.
+pemCACert='/opt/Zabbix/x509/sca.cer'
+agentConf='/etc/zabbix/zabbix_agentd.conf'
+# <- Defaults
+
 [[ $1 == '-x' ]] && { set -x; export TRACE=1; }
+err_ () {
+	echo "ERROR: $0: @$(date +%s): $@" >&2
+}
+
 declare -r PROXY_SETTINGS='/etc/profile.d/proxy.sh'
 declare -A err2msg=(
 	['ERR_INVALID_OPTION']='Invalid option passed to me'
+	['ERR_INC_FILE_NOT_FOUND']='Include file not found'
 	['ERR_TMP_DIR_FAIL']='Failed to create and use temporary directory'
 	['ERR_WEB_CON_REFUSED']='Connection to web-server was refused'
 	['ERR_CANT_GET_CRL']='Cant download CRL'
@@ -27,24 +39,13 @@ declare -A err2msg=(
 	['ERR_UNKNOWN_REF_OBJ_TYPE']='Unknown referred object type'
 )
 
-source '/opt/Libs/BASH/erc_handle.inc'
-source '/opt/Libs/BASH/ldap.inc'
-source '/opt/zabbix/aux/checks/domain_creds.inc'
-source '/opt/Libs/BASH/zbx_get_and_send.inc'
-[[ $(env) =~ (https?_proxy|HTTPS?_PROXY) ]] || {
-        [[ -f $PROXY_SETTINGS && -r $PROXY_SETTINGS ]] && \
-                source $PROXY_SETTINGS	
-}
-# Defaults ->
-# Default (fallback) CA certificate file. If the valid path to the CA cert should be found in the downloaded server certificate, this variable will be replaced.
-pemCACert='/opt/Zabbix/x509/sca.cer'
-agentConf='/etc/zabbix/zabbix_agentd.conf'
-# <- Defaults
-
-#source /etc/zabbix/zabbix_agentd.conf
-err_ () {
-	echo "ERROR: $0: @$(date +%s): $@" >&2
-}
+slf_base_path=$(readlink -e "$0")
+declare -A slf=(
+	[real_dir]=$(dirname "$slf_base_path")
+	[real_file]=$slf_base_path
+	[dir]=$(dirname "$0")
+	[file]=$0
+)
 
 declare -A host=(
 	['CertName']='support.example.com'
@@ -52,15 +53,47 @@ declare -A host=(
 )
 
 declare -A opts=(
-	['s']='host["CertName"]'
-	['z']='host["ZbxHost"]'
-	['p']='sslPort'
-	['x']='flTrace'
-	['i']='flIgnoreCAInCert'
-	['D']='flDontRemoveTmp'
+	['s']='host["CertName"] {Host name as specified in certificate`s CN}'
+	['z']='host["ZbxHost"] {Zabbix host to receive certificate check metrics}'
+	['p']='sslPort {Number of SSL TCP port to use}'
+	['x']='flTrace {Turn on BASH-tracing feature (i.e. set -x)}'
+	['i']='flIgnoreCAInCert {Ignore CA certificate url specified in certificate, use our own copy of CA certificate}'
+	['D']='flDontRemoveTmp {Do not remove temporary directory containing intermediate certificate processing results}'
+	['t']='flDryRun {Do not try to send anything to Zabbix, just show some useful debug info}'
 )
 
-source '/opt/Libs/BASH/getopts_helper.inc'
+declare -A libs=(
+	['getopts_helper']='R'
+	['erc_handle']='R'
+	['ldap']='O'
+	['domain_creds']='O'
+	['zbx_get_and_send']='R'
+)
+
+inc_path="${slf[real_dir]}/inc"
+for lib in ${!libs[@]}; do
+	inc_file="${inc_path}/${lib}.inc"
+	if [[ -f $inc_file ]]; then
+		source "$inc_file"
+	elif [[ ${libs[$lib]} == 'R' ]]; then
+		err_ "library $lib required, but not found in ${inc_path}"
+		exit $ERR_INC_FILE_NOT_FOUND
+	else
+		err_ "library $lib not found, but its considered optional, so we my skip it"
+	fi
+done
+
+if [[ $flDryRun && $flDryRun == 1 ]]; then
+	dryRunOpt='--dry-run'
+else
+	dryRunOpt=''
+fi
+
+[[ $(env) =~ (https?_proxy|HTTPS?_PROXY) ]] || {
+        [[ -f $PROXY_SETTINGS && -r $PROXY_SETTINGS ]] && \
+                source $PROXY_SETTINGS	
+}
+
 trace () {
 	echo "+${BASH_SOURCE[1]}:${BASH_LINENO[0]}:${FUNCNAME[1]}:${BASH_COMMAND}"
 }
@@ -91,12 +124,12 @@ hook_on_exit () {
 	if (( erc )); then
 	# Dont try to use zabbix_sender if we are here because of its failure!
 		(( (erc&255) == ERR_ZBX_SND_FAIL )) && return 0
-		zsend --memoize -vv -s ${host[ZbxHost]} -i - <<ITEMS
+		zsend $dryRunOpt --memoize -vv -s ${host[ZbxHost]} -i - <<ITEMS
 - check.cert.script_status $erc
 - check.cert.last_err_txt "$msg"
 ITEMS
 	else
-		zsend --memoize -vv -s ${host[ZbxHost]} -o 0 -k 'check.cert.script_status'
+		zsend $dryRunOpt --memoize -vv -s ${host[ZbxHost]} -o 0 -k 'check.cert.script_status'
 	fi
 	return 0
 }
@@ -193,7 +226,7 @@ checkCRLStatus=$?
 tsCertValidTill=$(date -d "$(sed -nr 's%^\s+Not After\s+:\s+%%p' $pemCert)" +%s)
 secsBeforeCertExpire=$((tsCertValidTill-$(date +%s)))
 
-try $ERR_ZBX_SND_FAIL zsend --memoize -vv -s ${host[ZbxHost]} -i - <<ITEMS
+try $ERR_ZBX_SND_FAIL zsend $dryRunOpt --memoize -vv -s ${host[ZbxHost]} -i - <<ITEMS
 - check.cert.time_before_expiration $secsBeforeCertExpire
 - check.cert.revoke_status $checkCRLStatus
 ITEMS

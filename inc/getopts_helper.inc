@@ -10,7 +10,7 @@ ${opt_help:0:-1}
 USAGE
 }
 
-[[ ${opts['h']} ]] || opts['h']='&opt_show_usage; exit 0'
+[[ ${opts['h']} ]] || opts['h']='&opt_show_usage; exit 0 {Show this useful message}'
 
 for opt_k in $(echo "${!opts[@]}" | sort); do
 	opt_dscr+=${opt_k}

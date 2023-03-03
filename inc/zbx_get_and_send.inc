@@ -109,6 +109,11 @@ EOSQL
 function zsend () {
  local zbxSrv pars=$@
  shopt -s extglob
+ if [[ $pars =~ (^|[[:space:]])-(-dry-run|t) ]]; then
+ 	echo -e "zsend called with parameters: $pars" >&2
+ 	[[ -t 0 ]] || echo -e 'zsend`s stdin: '"\n$(cat -)" >&2 	
+ 	return 0
+ fi
  if [[ $pars =~ (^|[[:space:]])-(-zabbix-server|z|-config|c) || ! $pars =~ (--host|-s)[[:space:]]+([a-zA-Z0-9.-]+) ]]; then
  	[[ $pars =~ --memo(ize|ry) ]] && pars=${pars//@(--memoize|--memory)/}
  	$binZbxSender $pars

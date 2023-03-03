@@ -68,7 +68,8 @@ try () {
 
 	source <(cat <<"EOSOURCE"
 $@	
-EOSOURCE) 2>&4
+EOSOURCE
+) 2>&4
 
 	local -i retc=$? flIsErr=0
 	if [[ $eval_retc ]]; then
